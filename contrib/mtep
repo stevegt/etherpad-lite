@@ -1,0 +1,138 @@
+#!/usr/bin/python
+
+/*
+ * Copyright 2013 Steve Traugott http://www.stevegt.com
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS-IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import cgi
+import os
+
+# XXX debugging
+import cgitb
+cgitb.enable()
+
+from py_etherpad import EtherpadLiteClient
+
+# XXX should get these from a config file
+api_key = open('/home/etherpad/etherpad-lite.git/APIKEY.txt', 'r').read()
+ep_host = os.environ.get('HTTP_HOST')
+ep_port = 9001
+ep_url_base = "http://%s:%d" % (ep_host, ep_port)
+ep_api_url = "%s/api" % ep_url_base
+
+def debug(msg):
+    open("/tmp/mtep.log", 'a').write(msg + "\n\n")
+
+debug(api_key)  
+debug(ep_api_url)  
+api = EtherpadLiteClient(api_key, ep_api_url)
+
+parms = cgi.FieldStorage()
+#print "Content-type: text/plain"
+#print
+#print dir(parms)
+#print os.environ
+
+debug(str(os.environ))  
+
+newparms = []
+pad = None
+assignmentId = None
+for k in parms.keys():
+    v = parms.getvalue(k)
+    if k == 'assignmentId' and not v.startswith("ASSIGN"):
+        k = 'userName'
+        assignmentId = v
+    if k == 'pad':
+        pad = v
+    newparms.append("%s=%s" % (k,v))
+
+path = os.environ.get('PATH_INFO')
+if not pad and path:
+    pad = path
+elif 'hitId' in parms.keys():
+    pad = parms.getvalue('hitId')
+elif not pad:
+    pad = 'default'
+if pad.startswith('/'):
+    pad = pad[1:]
+
+pad_url    = "%s/p/%s?%s" % (ep_url_base, pad,    '&'.join(newparms))
+debug(pad) 
+pad_ro = str(api.getReadOnlyID(pad)['readOnlyID'])
+pad_url_ro = "%s/p/%s?%s" % (ep_url_base, pad_ro, '&'.join(newparms))
+
+submit_base = parms.getvalue('turkSubmitTo')
+if submit_base:
+    action = "%s/mturk/externalSubmit" % submit_base
+else:
+    # action = "http://www.mturk.com/mturk/externalSubmit"
+    action = "https://workersandbox.mturk.com/mturk/externalSubmit"
+
+debug(action)
+
+if not assignmentId:
+    exturl = pad_url_ro
+    form = '''
+    <b>"Accept HIT" to start editing the document.</b>
+    <p>
+    '''
+else:
+    exturl = pad_url
+    form = """
+    <b>When you're finished, select one of
+    the multiple-choice answers here, then hit "Complete HIT". 
+    </b>
+    <p>
+
+    <form action="%s" method="post">
+    <input type="hidden" name="assignmentId" value="%s" />
+    <input type="hidden" name="hitId" value="%s" />
+    <input type="hidden" name="workerId" value="%s" />
+
+    <input type="radio" name="state" value="ok" checked>I'm done editing.<br>
+    <input type="radio" name="state" value="broken">I'm unable to see
+    or edit the document -- something's broken.<br>
+    Optional comment (any error messages etc.):
+    <br>
+    <textarea name="comment" rows="2" cols="40"></textarea>
+    <br>
+
+    <input type="submit" value="Complete HIT" />
+    </form>
+    """ % (action, assignmentId, parms.getvalue('hitId'),
+            parms.getvalue('workerId'))
+
+
+html = """
+
+You should see an editable document below.  Everyone working on this
+HIT sees this same document, including each others' edits, in real
+time.  Your mission, if you choose to accept it, is to participate in
+this editing.  See the instructions in the document itself for
+details of what needs to be done right now.  
+<p>
+
+%s
+
+<iframe height="600" width="100%%" scrolling="auto" frameborder="0" align="center" 
+src="%s"></iframe>
+
+""" % (form, exturl)
+    
+print "Content-type: text/html"
+print
+print html
+print
